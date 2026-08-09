@@ -17,12 +17,6 @@
     "hint": "判定任务建议 0（确定性强）。",
     "default": 0
   },
-  "judge_no_reasoning": {
-    "type": "bool",
-    "description": "判断层关闭思考链（非思考模式）",
-    "hint": "默认开启：判断只输出是/否，不需要思考过程，速度更快。",
-    "default": true
-  },
   "solidify_scene": {
     "type": "bool",
     "description": "场景固化（每轮对话后旁白固化场景状态）",

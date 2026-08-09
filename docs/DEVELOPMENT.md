@@ -1,24 +1,29 @@
 # 开发文档
 
-## 架构
+## 架构（v0.4）
 
-### 判断/生成分离
+### 判断 → 链式生成 → 旁白收尾
 
 ```
 用户消息
-  → 判断层：轮流询问每个角色人格「这条消息是否在叫你？」
-      · 使用轻量配置（judge_provider_id + temperature=0 + 非思考模式）
-      · 输出仅 是/否 —— 低参数 + 非思考保证判定稳定（无生成冲动干扰）
-  → 生成层：命中角色用主模型生成
-      · 完整人格 prompt + 状态注入（关系/近期台词）→ 台词
-  → 无命中 → 静默（stop_event 终止默认管道）
+  → 判断层：轮流询问每个角色「这条消息是否在叫你」
+      · 严格判定——默认「否」（宁可静默不抢话）
+      · 点名（叫名字/昵称）→ 是
+      · 群体称呼（你们/大家）→ 看固化场景中的在场角色
+      · 旁白独立判断——仅场景/动作/环境描述触发
+  → 链式生成：参与角色按序，每个看到之前的完整对话
+      角色A（用户消息）→ 角色B（用户消息+A）→ 角色C（用户消息+A+B）
+      · 对话自然衔接（B 接 A 的话——不再各说各话）
+  → 旁白收尾（每轮总是）：基于完整对话生成场景叙事
+      · 输出 [旁白] + 固化 scene.json（场景唯一权威——防漂移）
 ```
 
 ### 事件处理
 
-- `@filter.event_message_type(PRIVATE_MESSAGE, priority=100)` —— 只处理私聊，优先级 100
+- `@filter.event_message_type(PRIVATE_MESSAGE, priority=100)` —— 只处理私聊
 - `stop_event()` 终止事件传播（AngelHeart priority=-10 在 100 之后，不会介入）
 - `event.send()` 直接发送（不走管道调度——避免异步竞态）
+- **30s 超时保护**（`asyncio.wait_for`）——LLM 挂起不会卡死整个 Bot
 
 ## 设计决策与踩坑记录
 
@@ -26,17 +31,19 @@
 |:--|:--|:--|
 | v1 | LLM 判断归属 + `yield chain_result` | ❌ 管道竞态——异步 LLM 返回时管道已结束，回复被丢弃 |
 | v2 | 关键词匹配 + `event.send` | ❌ 多角色顺序响应不可靠（AngelHeart 预处理 + 管道生命周期干扰） |
-| v3 | 判断/生成分离 + `llm_generate` 直调 + `event.send` 直发 | ✅ 绕过管道调度，无竞态 |
+| v3 | 判断/生成分离 + `llm_generate` 直调 | ✅ 绕过管道调度——但「各自独立生成」导致各说各话 |
+| v4 | **链式生成 + 旁白收尾** | ✅ 角色间自然衔接 + 场景每轮固化 |
 
 ### 关键踩坑
 
-1. **`llm_generate()` 必填 `chat_provider_id`**：`context.llm_generate(chat_provider_id=..., prompt=..., system_prompt=...)`——漏传直接 TypeError。获取方式：`await context.get_current_chat_provider_id(umo)`
-2. **插件 logger 是 `self.logger`**：不是 `self.context.logger`（后者不存在——异常会被吞，表现为静默失败）
-3. **判断+生成合一的缺陷**：角色人设的「生成冲动」会干扰「是否被叫」判定——表现为轮流掉线（每次不同角色不响应）。分离后用轻量非思考模型做纯分类，判定稳定
-4. **非思考参数兼容性**：`thinking={"type": "disabled"}` 不被所有 provider 支持——已做容错（失败自动重试不带该参数）
-5. **AngelHeart 干扰**：其 handler priority=-10，路由插件 priority=100 先执行 + `stop_event()` 终止传播——无需禁用 AngelHeart（禁用会导致 Bot 完全静默的副作用）
-6. **持久化位置**：状态文件必须放 AstrBot data 目录（`plugin_data/`），放插件目录会被重装/更新覆盖
-7. **群体称呼在场判定**：没有角色离场记录 = 默认在场（「没说话 ≠ 不在场」）——避免台词少的角色被误判离场
+1. **`llm_generate()` 必填 `chat_provider_id`**：漏传直接 TypeError。获取：`await context.get_current_chat_provider_id(umo)`
+2. **插件 logger 是 `self.logger`**：`self.context.logger` 不存在——异常被吞表现为静默失败
+3. **判断+生成合一的缺陷**：角色人设的「生成冲动」干扰「是否被叫」判定——轮流掉线。分离 + 严格 prompt（默认否）解决
+4. **`thinking` 参数挂起**：DeepSeek 部分模型不支持 `thinking={"type":"disabled"}`——请求永久挂起（整个 Bot 无响应）——**移除该参数 + 加 30s 超时保护**（超时按无关处理，不卡死）
+5. **各自独立生成的「各说各话」**：每个角色只看到用户消息——回应重复/冲突。**链式生成**（上下文累积传递）解决
+6. **AngelHeart 干扰**：priority=-10 被 100 压过 + `stop_event()` 终止传播——无需禁用
+7. **持久化位置**：状态文件必须放 AstrBot data 目录（`plugin_data/`），放插件目录会被重装/更新覆盖
+8. **群体称呼在场判定**：以**固化场景**中的在场角色为准（场景权威）——不依赖近期台词（台词少的角色不会被误判离场）
 
 ## 状态文件
 
@@ -44,8 +51,16 @@
 
 | 文件 | 内容 |
 |:--|:--|
-| `recent_lines.json` | 近期台词历史（滑动窗口，判断上下文 + 状态注入） |
-| `relationships.json` | 关系状态（预留——记忆系统阶段实现） |
+| `scene.json` | 当前固化场景（旁白权威维护——每轮对话后更新） |
+| `recent_lines.json` | 近期台词历史（滑动窗口——判断上下文） |
+
+## 配置（WebUI 插件设置）
+
+| 配置项 | 说明 | 默认 |
+|:--|:--|:--|
+| `persona_ids` | 参与演出的角色人格 ID，逗号分隔 | 空（使用内置默认） |
+| `judge_provider_id` | 判断层模型（AstrBot provider ID） | `deepseek_talk/deepseek-v4-flash` |
+| `judge_temperature` | 判断层温度（越低越确定） | `0` |
 
 ## 开发流程
 
@@ -56,5 +71,5 @@
 
 ## 路线图
 
-- [ ] 记忆系统（关系图谱/剧情时间线——脚本化更新）
+- [ ] 记忆系统（由 AstrBot 插件生态承担——插件不特指/不绑定）
 - [ ] 判断层模型可换（OpenAI 兼容端点直连）
