@@ -87,7 +87,7 @@ class PipelinePlugin(Star):
         self._judge_provider = self._config.get("judge_provider_id") or "deepseek_talk/deepseek-v4-flash"
         self._judge_temperature = float(self._config.get("judge_temperature", 0) or 0)
         self.logger.info(
-            f"pipeline_v3 角色: {self._persona_ids} | 判断层: {self._judge_provider} temp={self._judge_temperature}"
+            f"pipeline 角色: {self._persona_ids} | 判断层: {self._judge_provider} temp={self._judge_temperature}"
         )
 
     # ---------- 状态持久化 ----------
@@ -129,9 +129,9 @@ class PipelinePlugin(Star):
             if resp and getattr(resp, "completion_text", None):
                 return resp.completion_text.strip()
         except asyncio.TimeoutError:
-            self.logger.warning("pipeline_v3 LLM 调用超时（30s）")
+            self.logger.warning("pipeline LLM 调用超时（30s）")
         except Exception as exc:
-            self.logger.error(f"pipeline_v3 LLM 调用失败: {exc!r}")
+            self.logger.error(f"pipeline LLM 调用失败: {exc!r}")
         return ""
 
     # ---------- 判断层 ----------
@@ -150,14 +150,14 @@ class PipelinePlugin(Star):
             scene=scene or "（未固化）", context=recent_ctx or "（无）", message=message_text
         )
         text = await self._call_llm(question, system_prompt, umo, provider=self._judge_provider)
-        self.logger.debug(f"pipeline_v3 判断 [{persona_id}]: {text[:30]!r}")
+        self.logger.debug(f"pipeline 判断 [{persona_id}]: {text[:30]!r}")
         t = (text or "").strip()
         if t == "是":
             return True
         if t == "否":
             return False
         # 无法解析（角色输出扮演文本=想参与）→ 按「是」处理（宁可多回不可漏回）
-        self.logger.warning(f"pipeline_v3 判断 [{persona_id}] 非标准输出 {t[:20]!r}——按是处理")
+        self.logger.warning(f"pipeline 判断 [{persona_id}] 非标准输出 {t[:20]!r}——按是处理")
         return True
 
     # ---------- 主处理 ----------
@@ -169,7 +169,7 @@ class PipelinePlugin(Star):
         message_text = event.get_message_outline().strip()
         if not message_text:
             return
-        self.logger.info(f"pipeline_v3 收到私聊: {message_text[:60]!r}")
+        self.logger.info(f"pipeline 收到私聊: {message_text[:60]!r}")
 
         # 状态读取：场景 + 近期台词
         scene = self._load_state("scene.json", {}).get("scene", "")
@@ -181,7 +181,7 @@ class PipelinePlugin(Star):
             if await self._judge(persona_id, message_text, scene, recent_ctx, event.unified_msg_origin):
                 targets.append(persona_id)
             await asyncio.sleep(0.1)
-        self.logger.info(f"pipeline_v3 命中: {targets}")
+        self.logger.info(f"pipeline 命中: {targets}")
 
         if not targets:
             # 全部无关 → 静默（终止事件传播，默认管道也不响应）
@@ -232,4 +232,4 @@ class PipelinePlugin(Star):
                 lines = self._load_state("recent_lines.json", [])
                 lines.append(f"旁白: {narrative[:120]}")
                 self._save_state("recent_lines.json", lines[-60:])
-                self.logger.info(f"pipeline_v3 场景固化: {narrative[:50]!r}")
+                self.logger.info(f"pipeline 场景固化: {narrative[:50]!r}")
