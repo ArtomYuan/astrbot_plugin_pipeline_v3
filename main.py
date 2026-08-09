@@ -140,24 +140,35 @@ class PipelineV3Plugin(Star):
         try:
             kwargs: dict[str, Any] = {"temperature": self._judge_temperature}
             if self._judge_no_reasoning:
-                kwargs["thinking"] = {"type": "disabled"}  # DeepSeek 非思考模式
-            resp = await self.context.llm_generate(
-                chat_provider_id=self._judge_provider,
-                prompt=question,
-                system_prompt=system_prompt,
-                **kwargs,
+                # DeepSeek 部分模型不支持 thinking 参数（会导致请求挂起）——不再直传，
+                # 用 temperature=0 + 简短判断 prompt 保证速度；模型本身快即可。
+                pass
+            resp = await asyncio.wait_for(
+                self.context.llm_generate(
+                    chat_provider_id=self._judge_provider,
+                    prompt=question,
+                    system_prompt=system_prompt,
+                    **kwargs,
+                ),
+                timeout=30,
             )
             text = (resp.completion_text or "").strip() if resp else ""
             self.logger.debug(f"pipeline_v3 判断 [{persona_id}]: {text[:30]!r}")
             return text.startswith("是")
+        except asyncio.TimeoutError:
+            self.logger.warning(f"pipeline_v3 判断超时 [{persona_id}]——按无关处理")
+            return False
         except Exception as exc:
-            self.logger.warning(f"pipeline_v3 判断失败（重试不带非思考参数）: {exc!r}")
+            self.logger.warning(f"pipeline_v3 判断失败（重试）: {exc!r}")
             try:
-                resp = await self.context.llm_generate(
-                    chat_provider_id=self._judge_provider,
-                    prompt=question,
-                    system_prompt=system_prompt,
-                    temperature=self._judge_temperature,
+                resp = await asyncio.wait_for(
+                    self.context.llm_generate(
+                        chat_provider_id=self._judge_provider,
+                        prompt=question,
+                        system_prompt=system_prompt,
+                        temperature=self._judge_temperature,
+                    ),
+                    timeout=30,
                 )
                 text = (resp.completion_text or "").strip() if resp else ""
                 return text.startswith("是")
