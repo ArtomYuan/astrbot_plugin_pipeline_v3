@@ -1,0 +1,9 @@
+name: astrbot_plugin_pipeline_v3
+display_name: 多角色路由演出
+desc: "AstrBot 多角色路由演出插件：单 Bot 私聊多角色轮流（按需触发/静默/旁白），复用 AstrBot 人格系统，状态脚本化持久化。"
+short_desc: 多角色私聊演出（路由触发 + 静默 + 旁白）
+version: 0.1.0
+author: ArtomYuan
+repo: https://github.com/ArtomYuan/astrbot_plugin_pipeline_v3
+support_platforms:
+  - aiocqhttp
