@@ -1,4 +1,4 @@
-name: astrbot_plugin_pipeline_v3
+name: astrbot_plugin_pipeline
 display_name: 多角色路由演出
 desc: "AstrBot 多角色路由演出插件：单 Bot 私聊多角色轮流（按需触发/静默/旁白），复用 AstrBot 人格系统，状态脚本化持久化。"
 short_desc: 多角色私聊演出（路由触发 + 静默 + 旁白）

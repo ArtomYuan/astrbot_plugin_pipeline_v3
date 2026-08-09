@@ -49,7 +49,7 @@
 
 ## 状态文件
 
-位于 `<AstrBot>/data/plugin_data/astrbot_plugin_pipeline_v3/`：
+位于 `<AstrBot>/data/plugin_data/astrbot_plugin_pipeline/`：
 
 | 文件 | 内容 |
 |:--|:--|

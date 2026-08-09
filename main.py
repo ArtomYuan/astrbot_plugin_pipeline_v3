@@ -1,4 +1,4 @@
-"""astrbot_plugin_pipeline_v3 — 多角色路由演出插件（链式生成 + 旁白收尾）。
+"""astrbot_plugin_pipeline — 多角色路由演出插件（链式生成 + 旁白收尾）。
 
 单 Bot 私聊场景：轮流判断「谁被叫」→ 参与角色链式生成（每个角色看到
 用户消息 + 之前所有角色的回应——对话自然衔接）→ 旁白基于完整对话收尾
@@ -11,7 +11,7 @@
 - context.llm_generate 直调 + event.send 直发（绕过管道调度）
 - priority=100 高于 AngelHeart(-10)，stop_event 终止事件传播
 - 30s 超时保护（防 LLM 挂起卡死）
-- 持久化数据在 /AstrBot/data/plugin_data/astrbot_plugin_pipeline_v3/
+- 持久化数据在 /AstrBot/data/plugin_data/astrbot_plugin_pipeline/
 """
 
 import asyncio
@@ -65,17 +65,17 @@ _NARRATOR_JUDGE = (
 
 
 @register(
-    "astrbot_plugin_pipeline_v3",
+    "astrbot_plugin_pipeline",
     "ArtomYuan",
     "多角色路由演出（链式生成/旁白收尾/场景固化）",
     "0.4.0",
-    "https://github.com/ArtomYuan/astrbot_plugin_pipeline_v3",
+    "https://github.com/ArtomYuan/astrbot_plugin_pipeline",
 )
-class PipelineV3Plugin(Star):
+class PipelinePlugin(Star):
     def __init__(self, context: Context, config: dict = None) -> None:
         super().__init__(context)
         self._config = config or {}
-        self._data_dir = "/AstrBot/data/plugin_data/astrbot_plugin_pipeline_v3"
+        self._data_dir = "/AstrBot/data/plugin_data/astrbot_plugin_pipeline"
         os.makedirs(self._data_dir, exist_ok=True)
         # 角色列表：优先插件配置（WebUI 可编辑），逗号分隔字符串兼容
         raw = self._config.get("persona_ids") or ""

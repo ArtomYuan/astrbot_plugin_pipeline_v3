@@ -13,7 +13,7 @@ AstrBot 多角色路由演出插件：单 Bot 私聊场景下，多个角色人�
 
 ## 安装
 
-1. 将插件目录放入 AstrBot 插件目录（`<AstrBot>/data/plugins/astrbot_plugin_pipeline_v3/`）
+1. 将插件目录放入 AstrBot 插件目录（`<AstrBot>/data/plugins/astrbot_plugin_pipeline/`）
 2. 在 AstrBot WebUI 插件管理中重载/启用插件
 3. 插件设置中配置 `persona_ids`（参与演出的角色人格 ID 列表）
 
