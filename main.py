@@ -119,6 +119,7 @@ class PipelineV3Plugin(Star):
                 f"用户消息：{message_text}"
             )
             reply = await self._llm(probe, system_prompt=system_prompt, umo=event.unified_msg_origin)
+            self.logger.info(f"pipeline_v3 [{persona_id}] 返回: {(reply or '')[:60]!r} silent={_SILENT in (reply or '')}")
             if reply and _SILENT not in reply:
                 short = persona_id.split("（")[0]
                 replies.append((short, reply))
