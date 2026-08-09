@@ -90,7 +90,7 @@
 1. 本地修改 → 提交推送（GitHub）
 2. 部署机插件目录 `git pull`
 3. 重启 AstrBot（或 WebUI 重载插件）
-4. 日志排查：`docker logs astrbot-core | grep pipeline_v3`
+4. 日志排查：`docker logs astrbot-core | grep pipeline`
 
 ## 路线图
 
