@@ -32,17 +32,9 @@ _DEFAULT_PERSONA_IDS = [
     "旁白",
 ]
 
-# 判断问题模板（严格判定——默认否）
+# 判断问题模板（简洁——只问是否涉及，要求只答是/否）
 _JUDGE_QUESTION = (
-    "判断下面的用户消息是否在叫你——严格判定，默认「否」：\n"
-    "1. 消息明确叫你或你的昵称（你的所有称呼）→ 是\n"
-    "2. 消息明确向你提问、提及你 → 是\n"
-    "3. 消息是群体称呼（「你们」「大家」「各位」）→ "
-    "看「当前场景」：场景中列出的在场角色包含你 → 是；"
-    "场景中没你，且近期对话也没有你 → 否\n"
-    "4. 其他情况（别人之间的对话、闲聊、无关话题）→ 否"
-    "——即使你很想参与，也等被叫到\n"
-    "拿不准 → 否（宁可静默，不抢话）\n"
+    "这条用户消息是否涉及你——叫你、提及你、问你、或群体称呼（你们/大家）包含你？\n"
     "只回答一个字：是 或 否\n\n"
     "当前场景：{scene}\n\n"
     "近期对话：{context}\n\n"
@@ -159,7 +151,14 @@ class PipelineV3Plugin(Star):
         )
         text = await self._call_llm(question, system_prompt, umo, provider=self._judge_provider)
         self.logger.debug(f"pipeline_v3 判断 [{persona_id}]: {text[:30]!r}")
-        return text.startswith("是")
+        t = (text or "").strip()
+        if t == "是":
+            return True
+        if t == "否":
+            return False
+        # 无法解析（角色输出扮演文本=想参与）→ 按「是」处理（宁可多回不可漏回）
+        self.logger.warning(f"pipeline_v3 判断 [{persona_id}] 非标准输出 {t[:20]!r}——按是处理")
+        return True
 
     # ---------- 主处理 ----------
     @filter.event_message_type(
