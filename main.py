@@ -111,13 +111,26 @@ class PipelineV3Plugin(Star):
             system_prompt = self._get_persona_prompt(persona_id)
             if not system_prompt:
                 continue
-            probe = (
-                f"判断下面的用户消息是否与你有关——包括直接叫你、提及你、"
-                f"问你问题、或你在场参与对话。\n"
-                f"有关：直接以你的身份自然回应这条消息{state_hint}\n"
-                f"无关：只输出 {_SILENT}，不要输出任何其他内容。\n\n"
-                f"用户消息：{message_text}"
-            )
+            is_narrator = persona_id == "旁白"
+            if is_narrator:
+                # 旁白：只在用户进行场景/动作/环境描述时叙事，对话一律静默
+                probe = (
+                    f"判断下面的用户消息是否是场景/动作/环境描述（例如推开门的动作、"
+                    f"看到的景色、身体感受等）。\n"
+                    f"是：以旁白身份描述这个场景/动作带来的叙事效果{state_hint}\n"
+                    f"否（普通对话/问候/提问）：只输出 {_SILENT}，不要输出任何其他内容。\n\n"
+                    f"用户消息：{message_text}"
+                )
+            else:
+                probe = (
+                    f"判断下面的用户消息是否与你有关——包括直接叫你、提及你、"
+                    f"问你问题、或你在场参与对话。\n"
+                    f"注意：如果消息是面向群体的（如「你们」「大家」「各位」「都在吗」），"
+                    f"视为与在场所有角色有关，你应当回应。\n"
+                    f"有关：直接以你的身份自然回应这条消息{state_hint}\n"
+                    f"无关：只输出 {_SILENT}，不要输出任何其他内容。\n\n"
+                    f"用户消息：{message_text}"
+                )
             reply = await self._llm(probe, system_prompt=system_prompt, umo=event.unified_msg_origin)
             self.logger.info(f"pipeline_v3 [{persona_id}] 返回: {(reply or '')[:60]!r} silent={_SILENT in (reply or '')}")
             if reply and _SILENT not in reply:
