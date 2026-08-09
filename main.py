@@ -85,13 +85,15 @@ class PipelineV3Plugin(Star):
     # ---------- LLM 调用 ----------
     async def _llm(self, prompt: str, system_prompt: str = "") -> str:
         try:
+            self.logger.debug(f"pipeline_v3 LLM 调用: prompt={prompt[:80]!r} system={system_prompt[:40]!r}")
             resp = await self.context.llm_generate(
                 prompt=prompt, system_prompt=system_prompt or None
             )
+            self.logger.debug(f"pipeline_v3 LLM 返回: {type(resp)} {getattr(resp, 'completion_text', None)!r}")
             if resp and getattr(resp, "completion_text", None):
                 return resp.completion_text.strip()
         except Exception as exc:  # 错误处理：不让插件崩溃
-            self.context.logger.error(f"pipeline_v3 LLM 调用失败: {exc}")
+            self.logger.error(f"pipeline_v3 LLM 调用失败: {exc!r}", exc_info=True)
         return ""
 
     # ---------- 路由判断 ----------
@@ -119,10 +121,13 @@ class PipelineV3Plugin(Star):
             return
 
         # 1. 路由判断
+        self.logger.info(f"pipeline_v3 收到私聊: {message_text[:60]!r}")
         try:
             targets = await self._route(message_text)
-        except Exception:
+        except Exception as exc:
+            self.logger.error(f"pipeline_v3 路由异常: {exc!r}", exc_info=True)
             targets = []
+        self.logger.info(f"pipeline_v3 路由结果: {targets}")
         if not targets:
             # 无关 → 静默（终止事件传播，默认管道也不响应）
             event.stop_event()
