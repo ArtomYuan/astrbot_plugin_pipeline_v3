@@ -83,11 +83,14 @@ class PipelineV3Plugin(Star):
         return None
 
     # ---------- LLM 调用 ----------
-    async def _llm(self, prompt: str, system_prompt: str = "") -> str:
+    async def _llm(self, prompt: str, system_prompt: str = "", umo: str = "") -> str:
         try:
-            self.logger.debug(f"pipeline_v3 LLM 调用: prompt={prompt[:80]!r} system={system_prompt[:40]!r}")
+            chat_provider_id = await self.context.get_current_chat_provider_id(umo)
+            self.logger.debug(f"pipeline_v3 LLM 调用: provider={chat_provider_id} prompt={prompt[:60]!r}")
             resp = await self.context.llm_generate(
-                prompt=prompt, system_prompt=system_prompt or None
+                chat_provider_id=chat_provider_id,
+                prompt=prompt,
+                system_prompt=system_prompt or None,
             )
             self.logger.debug(f"pipeline_v3 LLM 返回: {type(resp)} {getattr(resp, 'completion_text', None)!r}")
             if resp and getattr(resp, "completion_text", None):
@@ -97,9 +100,9 @@ class PipelineV3Plugin(Star):
         return ""
 
     # ---------- 路由判断 ----------
-    async def _route(self, message_text: str) -> list[str]:
+    async def _route(self, message_text: str, umo: str = "") -> list[str]:
         """LLM 判断消息归属：返回角色名列表（[] = 无关静默）。"""
-        raw = await self._llm(_ROUTER_PROMPT, system_prompt="你是一个严格的 JSON 输出器。")
+        raw = await self._llm(_ROUTER_PROMPT, system_prompt="你是一个严格的 JSON 输出器。", umo=umo)
         m = re.search(r"\[.*?\]", raw or "", re.S)
         if not m:
             return []
@@ -123,7 +126,7 @@ class PipelineV3Plugin(Star):
         # 1. 路由判断
         self.logger.info(f"pipeline_v3 收到私聊: {message_text[:60]!r}")
         try:
-            targets = await self._route(message_text)
+            targets = await self._route(message_text, umo=event.unified_msg_origin)
         except Exception as exc:
             self.logger.error(f"pipeline_v3 路由异常: {exc!r}", exc_info=True)
             targets = []
@@ -155,7 +158,7 @@ class PipelineV3Plugin(Star):
             system_prompt = self._get_persona_prompt(persona_id)
             if not system_prompt:
                 continue
-            reply = await self._llm(message_text + state_hint, system_prompt=system_prompt)
+            reply = await self._llm(message_text + state_hint, system_prompt=system_prompt, umo=event.unified_msg_origin)
             if reply:
                 await event.send(MessageChain([Plain(f"[{short}] {reply}")]))
                 # 状态更新（脚本化——仅追加台词，关系更新后续版本）
