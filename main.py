@@ -1,17 +1,16 @@
-"""astrbot_plugin_pipeline_v3 — 多角色路由演出插件（判断/生成分离 + 场景固化）。
+"""astrbot_plugin_pipeline_v3 — 多角色路由演出插件（链式生成 + 旁白收尾）。
 
-单 Bot 私聊场景：轮流询问每个角色「这条消息是否在叫你」——
-判断层用轻量配置（非思考 + 低温度），命中角色后用主模型应答。
-
-场景固化：旁白是场景唯一权威——每轮对话后基于上下文固化场景状态
-（scene.json），所有角色的判断与生成都注入固化场景——避免场景漂移。
+单 Bot 私聊场景：轮流判断「谁被叫」→ 参与角色链式生成（每个角色看到
+用户消息 + 之前所有角色的回应——对话自然衔接）→ 旁白基于完整对话收尾
+（场景叙事 + 固化 scene.json）。
 
 架构要点：
-- 判断层：llm_generate(judge_provider_id, temperature=0, 非思考) —— 是/否 分类
-- 生成层：llm_generate(主 provider) —— 人格 + 场景 + 状态 → 台词
-- 固化层：旁白人格（主模型）—— 对话后更新 scene.json；场景变化时输出叙事句
+- 判断层：严格判定（默认否）——点名/群体（按场景在场）/场景描述
+- 生成层：链式——角色按序，上下文累积传递
+- 旁白层：每轮收尾——生成场景叙事并固化（旁白是场景唯一权威）
 - context.llm_generate 直调 + event.send 直发（绕过管道调度）
 - priority=100 高于 AngelHeart(-10)，stop_event 终止事件传播
+- 30s 超时保护（防 LLM 挂起卡死）
 - 持久化数据在 /AstrBot/data/plugin_data/astrbot_plugin_pipeline_v3/
 """
 
@@ -33,40 +32,48 @@ _DEFAULT_PERSONA_IDS = [
     "旁白",
 ]
 
-# 静默/无变化标记
-_SAME = "__SAME__"
-
-# 判断问题模板（轮流询问每个角色）
+# 判断问题模板（严格判定——默认否）
 _JUDGE_QUESTION = (
-    "判断下面的用户消息是否是在叫你、提及你、问你问题、或与你有关（你在这场对话中）。\n"
-    "注意：\n"
-    "- 消息中的群体称呼（「你们」「大家」「各位」）：默认视为与你有关，你应当回应——"
-    "除非近期对话中有你明确离场/不在场的记录。\n"
-    "- 没有你的离场记录 = 你默认在场（即使近期没说过话）。\n"
-    "- 直接叫你/单独问你：一定回应。\n"
+    "判断下面的用户消息是否在叫你——严格判定，默认「否」：\n"
+    "1. 消息明确叫你或你的昵称（你的所有称呼）→ 是\n"
+    "2. 消息明确向你提问、提及你 → 是\n"
+    "3. 消息是群体称呼（「你们」「大家」「各位」）→ "
+    "看「当前场景」：场景中列出的在场角色包含你 → 是；"
+    "场景中没你，且近期对话也没有你 → 否\n"
+    "4. 其他情况（别人之间的对话、闲聊、无关话题）→ 否"
+    "——即使你很想参与，也等被叫到\n"
+    "拿不准 → 否（宁可静默，不抢话）\n"
     "只回答一个字：是 或 否\n\n"
     "当前场景：{scene}\n\n"
     "近期对话：{context}\n\n"
     "用户消息：{message}"
 )
 
-# 场景固化指令（旁白人格执行——每轮对话后）
-_SOLIDIFY_PROMPT = (
-    "你是场景固化的权威。基于「当前场景」和「本轮对话内容」，判断场景是否发生了变化"
-    "（角色移动/时间流逝/环境变化/重要动作等）。\n"
-    "如果场景发生了变化：输出新的场景状态（简洁描述，50-100 字，包含地点/时间/环境/"
-    "在场角色状态），不要输出其他内容。\n"
-    "如果场景没有变化：只输出 {same}\n\n"
+# 旁白收尾 prompt（每轮对话后——场景叙事 + 固化）
+_NARRATOR_PROMPT = (
+    "基于以下对话，延续当前场景生成一段简洁的场景叙事（50-100 字）。\n"
+    "要求：包含场景延续/变化、环境与在场角色的状态，自然收束本轮对话。\n"
+    "只输出场景叙事文本，不要输出其他内容。\n\n"
     "当前场景：{scene}\n\n"
     "本轮对话：{conversation}"
+)
+
+# 旁白判断（是否场景描述——用户主动描述时）
+_NARRATOR_JUDGE = (
+    "判断下面的用户消息是否是场景/动作/环境描述（例如推开门的动作、看到的景色、"
+    "身体感受等）。\n"
+    "是 → 是\n"
+    "否（普通对话/问候/提问）→ 否\n"
+    "只回答一个字：是 或 否\n\n"
+    "用户消息：{message}"
 )
 
 
 @register(
     "astrbot_plugin_pipeline_v3",
     "ArtomYuan",
-    "多角色路由演出（按需触发/静默/旁白/场景固化）",
-    "0.3.0",
+    "多角色路由演出（链式生成/旁白收尾/场景固化）",
+    "0.4.0",
     "https://github.com/ArtomYuan/astrbot_plugin_pipeline_v3",
 )
 class PipelineV3Plugin(Star):
@@ -84,12 +91,8 @@ class PipelineV3Plugin(Star):
         # 判断层配置
         self._judge_provider = self._config.get("judge_provider_id") or "deepseek_talk/deepseek-v4-flash"
         self._judge_temperature = float(self._config.get("judge_temperature", 0) or 0)
-        self._judge_no_reasoning = bool(self._config.get("judge_no_reasoning", True))
-        # 固化层开关（每轮对话后旁白固化场景）
-        self._solidify = bool(self._config.get("solidify_scene", True))
         self.logger.info(
-            f"pipeline_v3 角色: {self._persona_ids} | 判断层: {self._judge_provider} "
-            f"temp={self._judge_temperature} 非思考={self._judge_no_reasoning} 场景固化={self._solidify}"
+            f"pipeline_v3 角色: {self._persona_ids} | 判断层: {self._judge_provider} temp={self._judge_temperature}"
         )
 
     # ---------- 状态持久化 ----------
@@ -114,87 +117,53 @@ class PipelineV3Plugin(Star):
             pass
         return None
 
-    # ---------- 生成层（主模型） ----------
-    async def _generate(self, prompt: str, system_prompt: str, umo: str) -> str:
+    # ---------- LLM 调用（带超时保护） ----------
+    async def _call_llm(self, prompt: str, system_prompt: str, umo: str, provider: str | None = None) -> str:
         try:
-            chat_provider_id = await self.context.get_current_chat_provider_id(umo)
-            resp = await self.context.llm_generate(
-                chat_provider_id=chat_provider_id,
-                prompt=prompt,
-                system_prompt=system_prompt or None,
+            if provider is None:
+                provider = await self.context.get_current_chat_provider_id(umo)
+            resp = await asyncio.wait_for(
+                self.context.llm_generate(
+                    chat_provider_id=provider,
+                    prompt=prompt,
+                    system_prompt=system_prompt or None,
+                    temperature=self._judge_temperature,
+                ),
+                timeout=30,
             )
             if resp and getattr(resp, "completion_text", None):
                 return resp.completion_text.strip()
+        except asyncio.TimeoutError:
+            self.logger.warning("pipeline_v3 LLM 调用超时（30s）")
         except Exception as exc:
-            self.logger.error(f"pipeline_v3 生成失败: {exc!r}", exc_info=True)
+            self.logger.error(f"pipeline_v3 LLM 调用失败: {exc!r}")
         return ""
 
-    # ---------- 判断层（轻量：非思考 + 低温度） ----------
+    # ---------- 判断层 ----------
     async def _judge(self, persona_id: str, message_text: str, scene: str, recent_ctx: str, umo: str) -> bool:
         system_prompt = self._get_persona_prompt(persona_id)
         if not system_prompt:
             return False
+        if persona_id == "旁白":
+            # 旁白：仅场景/动作/环境描述触发
+            text = await self._call_llm(
+                _NARRATOR_JUDGE.format(message=message_text),
+                system_prompt, umo, provider=self._judge_provider,
+            )
+            return text.startswith("是")
         question = _JUDGE_QUESTION.format(
             scene=scene or "（未固化）", context=recent_ctx or "（无）", message=message_text
         )
-        try:
-            kwargs: dict[str, Any] = {"temperature": self._judge_temperature}
-            if self._judge_no_reasoning:
-                # DeepSeek 部分模型不支持 thinking 参数（会导致请求挂起）——不再直传，
-                # 用 temperature=0 + 简短判断 prompt 保证速度；模型本身快即可。
-                pass
-            resp = await asyncio.wait_for(
-                self.context.llm_generate(
-                    chat_provider_id=self._judge_provider,
-                    prompt=question,
-                    system_prompt=system_prompt,
-                    **kwargs,
-                ),
-                timeout=30,
-            )
-            text = (resp.completion_text or "").strip() if resp else ""
-            self.logger.debug(f"pipeline_v3 判断 [{persona_id}]: {text[:30]!r}")
-            return text.startswith("是")
-        except asyncio.TimeoutError:
-            self.logger.warning(f"pipeline_v3 判断超时 [{persona_id}]——按无关处理")
-            return False
-        except Exception as exc:
-            self.logger.warning(f"pipeline_v3 判断失败（重试）: {exc!r}")
-            try:
-                resp = await asyncio.wait_for(
-                    self.context.llm_generate(
-                        chat_provider_id=self._judge_provider,
-                        prompt=question,
-                        system_prompt=system_prompt,
-                        temperature=self._judge_temperature,
-                    ),
-                    timeout=30,
-                )
-                text = (resp.completion_text or "").strip() if resp else ""
-                return text.startswith("是")
-            except Exception as exc2:
-                self.logger.error(f"pipeline_v3 判断重试失败: {exc2!r}")
-                return False
-
-    # ---------- 场景固化（旁白权威——每轮对话后） ----------
-    async def _solidify_scene(self, scene: str, conversation: str, umo: str) -> str:
-        """返回：新场景描述（变化）或 __SAME__。"""
-        narrator_prompt = self._get_persona_prompt("旁白")
-        if not narrator_prompt:
-            return _SAME
-        prompt = _SOLIDIFY_PROMPT.format(same=_SAME, scene=scene or "（尚未建立场景）", conversation=conversation)
-        result = await self._generate(prompt, narrator_prompt, umo)
-        result = (result or "").strip()
-        if not result or result.startswith(_SAME):
-            return _SAME
-        return result
+        text = await self._call_llm(question, system_prompt, umo, provider=self._judge_provider)
+        self.logger.debug(f"pipeline_v3 判断 [{persona_id}]: {text[:30]!r}")
+        return text.startswith("是")
 
     # ---------- 主处理 ----------
     @filter.event_message_type(
         filter.EventMessageType.PRIVATE_MESSAGE, priority=100
     )
     async def route_handler(self, event: AstrMessageEvent) -> None:
-        """私聊消息：轮流判断 → 命中角色应答 → 旁白固化场景。"""
+        """私聊消息：判断参与列表 → 链式生成 → 旁白收尾固化。"""
         message_text = event.get_message_outline().strip()
         if not message_text:
             return
@@ -203,14 +172,8 @@ class PipelineV3Plugin(Star):
         # 状态读取：场景 + 近期台词
         scene = self._load_state("scene.json", {}).get("scene", "")
         recent_ctx = " / ".join(self._load_state("recent_lines.json", [])[-20:])
-        state_hint = ""
-        relationships = self._load_state("relationships.json", {})
-        if relationships:
-            state_hint += f"\n[关系状态] {json.dumps(relationships, ensure_ascii=False)}"
-        if scene:
-            state_hint = f"\n[当前场景] {scene}" + state_hint
 
-        # 1. 判断层：轮流询问每个角色「是否在叫你」
+        # 1. 判断层：轮流询问每个角色
         targets = []
         for persona_id in self._persona_ids:
             if await self._judge(persona_id, message_text, scene, recent_ctx, event.unified_msg_origin):
@@ -228,37 +191,43 @@ class PipelineV3Plugin(Star):
         event.stop_event()
         event.should_call_llm(False)
 
-        # 3. 生成层：命中的角色用主模型应答
-        replies = []
+        # 3. 链式生成：参与角色按序——每个看到之前的完整对话
+        state_hint = f"\n[当前场景] {scene}" if scene else ""
+        chain = message_text
         for persona_id in targets:
             system_prompt = self._get_persona_prompt(persona_id)
             if not system_prompt:
                 continue
-            reply = await self._generate(
-                message_text + state_hint, system_prompt=system_prompt,
-                umo=event.unified_msg_origin,
-            )
+            if persona_id == "旁白":
+                # 用户主动场景描述：旁白直接响应（生成场景叙事）
+                reply = await self._call_llm(
+                    f"根据用户描述生成场景叙事（延续当前场景{state_hint}）：\n{message_text}",
+                    system_prompt, event.unified_msg_origin,
+                )
+            else:
+                reply = await self._call_llm(
+                    f"{chain}{state_hint}", system_prompt, event.unified_msg_origin
+                )
             if reply:
                 short = persona_id.split("（")[0]
-                replies.append((short, reply))
-                # 旁白主动响应（用户场景描述）→ 同步固化到 scene.json
-                if persona_id == "旁白":
-                    self._save_state("scene.json", {"scene": reply})
+                await event.send(MessageChain([Plain(f"[{short}] {reply}")]))
+                chain += f"\n[{short}] {reply}"
                 lines = self._load_state("recent_lines.json", [])
                 lines.append(f"{short}: {reply[:120]}")
                 self._save_state("recent_lines.json", lines[-60:])
             await asyncio.sleep(0.3)
 
-        for short, reply in replies:
-            await event.send(MessageChain([Plain(f"[{short}] {reply}")]))
-            await asyncio.sleep(0.3)
-
-        # 4. 场景固化：对话后旁白基于上下文更新场景（防漂移）
-        if self._solidify and replies:
-            conversation = "\n".join(f"{s}: {r}" for s, r in replies)
-            new_scene = await self._solidify_scene(scene, conversation, event.unified_msg_origin)
-            if new_scene != _SAME:
-                self._save_state("scene.json", {"scene": new_scene})
-                self.logger.info(f"pipeline_v3 场景固化: {new_scene[:60]!r}")
-                # 场景变化 → 输出叙事句（旁白演出收尾）
-                await event.send(MessageChain([Plain(f"[旁白] {new_scene}")]))
+        # 4. 旁白收尾（总是——单/多角色对话后都生成场景叙事 + 固化）
+        narrator_prompt = self._get_persona_prompt("旁白")
+        if narrator_prompt:
+            narrative = await self._call_llm(
+                _NARRATOR_PROMPT.format(scene=scene or "（尚未建立场景）", conversation=chain),
+                narrator_prompt, event.unified_msg_origin,
+            )
+            if narrative:
+                await event.send(MessageChain([Plain(f"[旁白] {narrative}")]))
+                self._save_state("scene.json", {"scene": narrative})
+                lines = self._load_state("recent_lines.json", [])
+                lines.append(f"旁白: {narrative[:120]}")
+                self._save_state("recent_lines.json", lines[-60:])
+                self.logger.info(f"pipeline_v3 场景固化: {narrative[:50]!r}")
