@@ -46,7 +46,13 @@ class PipelineV3Plugin(Star):
         self._config = config or {}
         self._data_dir = "/AstrBot/data/plugin_data/astrbot_plugin_pipeline_v3"
         os.makedirs(self._data_dir, exist_ok=True)
-        self._persona_ids = self._config.get("persona_ids", _DEFAULT_PERSONA_IDS)
+        # 人格列表：优先插件配置（WebUI 可编辑），逗号分隔字符串兼容
+        raw = self._config.get("persona_ids") or ""
+        if isinstance(raw, str):
+            self._persona_ids = [p.strip() for p in raw.split(",") if p.strip()] or _DEFAULT_PERSONA_IDS
+        else:
+            self._persona_ids = raw or _DEFAULT_PERSONA_IDS
+        self.logger.info(f"pipeline_v3 角色列表: {self._persona_ids}")
 
     # ---------- 状态持久化 ----------
     def _load_state(self, name: str, default: Any) -> Any:

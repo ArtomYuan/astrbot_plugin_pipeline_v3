@@ -1,0 +1,8 @@
+{
+  "persona_ids": {
+    "type": "string",
+    "description": "参与演出的角色人格 ID 列表",
+    "hint": "填 AstrBot 人格管理中的 persona_id，多个用英文逗号分隔。例如：庄方宜（RC+YAML满血版本）,陈千语（RC+YAML满血版本）,佩丽卡（RC+YAML满血版本）,旁白\n新增角色时在此添加 ID 即可，插件自动参与轮询；「旁白」人格必须保留（场景叙事）。",
+    "default": "庄方宜（RC+YAML满血版本）,陈千语（RC+YAML满血版本）,佩丽卡（RC+YAML满血版本）,旁白"
+  }
+}
