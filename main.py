@@ -112,6 +112,8 @@ class PipelineV3Plugin(Star):
             state_hint += f"\n[近期台词] {' / '.join(recent[-6:])}"
 
         # 轮流询问每个角色（判断+生成合一）
+        # 上下文：近期台词（判断「是否在场/你们指代谁」的依据）
+        recent_ctx = " / ".join(self._load_state("recent_lines.json", [])[-8:])
         replies = []
         for persona_id in self._persona_ids:
             system_prompt = self._get_persona_prompt(persona_id)
@@ -129,12 +131,15 @@ class PipelineV3Plugin(Star):
                 )
             else:
                 probe = (
+                    f"近期对话（判断你是否在场的依据）：{recent_ctx or '（无）'}\n\n"
                     f"判断下面的用户消息是否与你有关——包括直接叫你、提及你、"
                     f"问你问题、或你在场参与对话。\n"
-                    f"注意：如果消息是面向群体的（如「你们」「大家」「各位」「都在吗」），"
-                    f"视为与在场所有角色有关，你应当回应。\n"
+                    f"注意：\n"
+                    f"- 消息中的群体称呼（「你们」「大家」「各位」）：仅当你在近期对话中"
+                    f"在场/被提及/正在交流时才回应；你不在场则不回应（输出 {_SILENT}）。\n"
+                    f"- 直接叫你/单独问你：一定回应。\n"
                     f"有关：直接以你的身份自然回应这条消息{state_hint}\n"
-                    f"无关：只输出 {_SILENT}，不要输出任何其他内容。\n\n"
+                    f"无关/不在场：只输出 {_SILENT}，不要输出任何其他内容。\n\n"
                     f"用户消息：{message_text}"
                 )
             reply = await self._llm(probe, system_prompt=system_prompt, umo=event.unified_msg_origin)
