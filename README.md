@@ -1,4 +1,4 @@
-# astrbot_plugin_pipeline_v3
+# astrbot_plugin_pipeline
 
 AstrBot 多角色路由演出插件：单 Bot 私聊场景下，多个角色人格轮流响应（按需触发/静默/旁白）。
 
