@@ -230,6 +230,9 @@ class PipelineV3Plugin(Star):
             if reply:
                 short = persona_id.split("（")[0]
                 replies.append((short, reply))
+                # 旁白主动响应（用户场景描述）→ 同步固化到 scene.json
+                if persona_id == "旁白":
+                    self._save_state("scene.json", {"scene": reply})
                 lines = self._load_state("recent_lines.json", [])
                 lines.append(f"{short}: {reply[:120]}")
                 self._save_state("recent_lines.json", lines[-60:])
